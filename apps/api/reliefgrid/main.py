@@ -452,16 +452,19 @@ def match(request_id: UUID, request: Request, radius_km: int = Query(500, ge=1, 
         conn.execute(text("DELETE FROM match_candidates WHERE request_item_id IN (SELECT id FROM request_items WHERE request_id=:id)"),
                      {"id": request_id})
         scored = []
+        snapshots = []
         for row in candidates:
             score = score_match(req["priority"], row["distance_m"], row["available"],
                                 row["requested"], row["expires_on"], req["required_by"])
             components = {"urgency": score.urgency, "distance": score.distance,
                           "coverage": score.coverage, "expiry": score.expiry, "deadline": score.deadline}
-            conn.execute(text("""INSERT INTO match_candidates(request_item_id,lot_id,components,total,distance_m)
-                VALUES (:item,:lot,CAST(:parts AS jsonb),:total,:distance)"""),
-                {"item": row["request_item_id"], "lot": row["lot_id"],
-                 "parts": json.dumps(components), "total": score.total, "distance": row["distance_m"]})
+            snapshots.append({"item": row["request_item_id"], "lot": row["lot_id"],
+                              "parts": json.dumps(components), "total": score.total,
+                              "distance": row["distance_m"]})
             scored.append({**data(row), "score": score.total, "components": components})
+        if snapshots:
+            conn.execute(text("""INSERT INTO match_candidates(request_item_id,lot_id,components,total,distance_m)
+                VALUES (:item,:lot,CAST(:parts AS jsonb),:total,:distance)"""), snapshots)
         scored.sort(key=lambda r: (-r["score"], r["expires_on"] or "9999-12-31", r["distance_m"], r["lot_id"]))
         if req["status"] == "VERIFIED":
             change_status(conn, p, request, request_id, "VERIFIED", "MATCHED")
