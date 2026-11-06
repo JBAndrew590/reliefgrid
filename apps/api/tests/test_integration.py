@@ -143,6 +143,37 @@ def test_session_revocation_and_role_boundary(client,actors):
     assert client.get("/v1/auth/me").status_code==401
 
 
+def test_member_roles_require_existing_membership_and_preserve_an_admin(client, actors):
+    login(client, actors, "requester")
+    requester_id = client.get("/v1/auth/me").json()["id"]
+    supplier = login(client, actors, "supplier")
+    supplier_id = client.get("/v1/auth/me").json()["id"]
+    def role_url(user_id):
+        return f"/v1/members/{user_id}/role?role=dispatcher"
+    assert client.post(role_url(requester_id), headers=supplier).status_code == 404
+    assert client.post(role_url(supplier_id), headers=supplier).status_code == 409
+    with engine.begin() as conn:
+        conn.execute(text("""INSERT INTO memberships(user_id,organization_id,role)
+            VALUES (:uid,:org,'auditor')"""), {"uid": requester_id, "org": actors["supplier"]["org"]})
+    updated = client.post(role_url(requester_id), headers=supplier)
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["role"] == "dispatcher"
+
+
+def test_inactive_supplier_disappears_from_shared_map(client, actors):
+    requester = login(client, actors, "requester")
+    supplier_location = actors["supplier"]["location"]
+    before = client.get("/v1/map", headers=requester)
+    assert before.status_code == 200, before.text
+    assert supplier_location in {location["id"] for location in before.json()["locations"]}
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE organizations SET active=false WHERE id=:org"),
+                     {"org": actors["supplier"]["org"]})
+    after = client.get("/v1/map", headers=requester)
+    assert after.status_code == 200, after.text
+    assert supplier_location not in {location["id"] for location in after.json()["locations"]}
+
+
 def test_worker_expires_overdue_unallocated_request(client, actors):
     from reliefgrid.worker import expire_once
     requester=login(client,actors,"requester")

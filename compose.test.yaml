@@ -2,13 +2,14 @@ services:
   test-api:
     build:
       context: ./apps/api
+      target: test
     env_file: .env
     depends_on:
       db:
         condition: service_healthy
     volumes:
       - ./apps/api/tests:/app/tests:ro
-    command: ["sh", "-c", "pip install -e '.[dev]' && alembic upgrade head && pytest -q"]
+    command: ["sh", "-c", "alembic upgrade head && pytest -q"]
   test-web:
     build:
       context: ./apps/web

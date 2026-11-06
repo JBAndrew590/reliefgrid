@@ -61,7 +61,7 @@ sequenceDiagram
     participant P as PostgreSQL
     C->>A: Reserve item/lot + idempotency key
     A->>P: Begin; advisory key lock
-    A->>P: Lock request/item, then lot
+    A->>P: Lock request, then lot
     A->>P: Validate demand, eligibility, available stock
     A->>P: Conditional reserved update; allocation; audit
     P-->>A: Commit or conflict
@@ -97,6 +97,23 @@ Environment variables in `.env.example`:
 
 If changing database passwords after initialization, remove the local volume with `make reset` or alter the database roles manually. Never use example credentials in a deployed environment.
 
+### Windows PowerShell quick start
+
+Extract the ZIP first and open PowerShell in the extracted `reliefgrid` folder (the one containing `compose.yaml`). Install and start Docker Desktop with its WSL 2 backend, then run:
+
+```powershell
+Copy-Item .env.example .env
+notepad .env
+# Save local passwords in .env; update both database URLs if you change the corresponding passwords.
+docker compose up --build -d db
+docker compose run --build --rm api alembic upgrade head
+docker compose up --build -d api worker web
+docker compose exec -T api python -m reliefgrid.seed
+docker compose ps
+```
+
+Open `http://localhost:3000` and sign in as `coordinator@reliefgrid.local` with the password in `DEMO_PASSWORD`. The first build may take several minutes. If a command fails, run `docker compose logs --tail=100 db api web worker` and inspect the first error. To run the database and web checks after startup, use `docker compose -f compose.yaml -f compose.test.yaml run --build --rm test-api` and the equivalent `test-web` command.
+
 ## Developer commands
 
 | Command | Action |
@@ -131,7 +148,7 @@ Eligibility is a hard gate: same resource, active supplier, publicly shared inve
 
 ## Current verification and limits
 
-Python syntax, Ruff, mypy, OpenAPI generation, pure domain tests, web lint, TypeScript checks, component tests and a production web build were run during creation. Docker/PostGIS integration, live migrations, browser journey and benchmark require the local/CI stack and must be run before claiming deployment readiness. The repository contains no verified screenshots; a screenshot from a running browser should be added after those checks. The local dependency audit found no known Python or production npm vulnerabilities; eight moderate findings remain in the development ESLint toolchain. There is no outbound notification channel or uploaded delivery evidence, no external messaging integration, and no platform administration UI. The map and operational lists use bounded queries; advanced text search and fleet routing are outside this prototype.
+Python syntax, Ruff, mypy, OpenAPI generation, web lint, TypeScript checks, component tests and a production web build were run during creation. On 2026-11-06, an embedded PGlite database with its PostGIS extension passed a migration upgrade/downgrade/upgrade round trip and 10 API/domain/seed tests, including role and tenant boundaries, spatial queries, idempotency and full delivery. Eight database tests also passed after explicitly switching connections to the limited `reliefgrid_app` role; this exposed and resolved a missing row-lock permission. PGlite's socket server multiplexes a single database connection: a simultaneous allocation test returned a connection error, so this result cannot establish PostgreSQL race behavior. Docker/PostgreSQL integration, native concurrency, browser journey and benchmark still require the local/CI stack before claiming deployment readiness. The repository contains no verified screenshots; add a screenshot from a running browser after those checks. The local dependency audit found no known Python or production npm vulnerabilities; eight moderate findings remain in the development ESLint toolchain. There is no outbound notification channel or uploaded delivery evidence, no external messaging integration, and no platform administration UI. The map and operational lists use bounded queries; advanced text search and fleet routing are outside this prototype.
 
 ## Roadmap
 

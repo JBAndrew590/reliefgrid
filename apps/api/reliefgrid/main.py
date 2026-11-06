@@ -482,7 +482,7 @@ def allocate(body: AllocationInput, request: Request, idempotency_key: str | Non
             return prior
         item = conn.execute(text("""SELECT i.id,i.resource_id,i.quantity,q.id AS request_id,q.status,q.required_by
             FROM request_items i JOIN resource_requests q ON q.id=i.request_id
-            WHERE i.id=:item AND q.organization_id=:org FOR UPDATE OF q,i"""),
+            WHERE i.id=:item AND q.organization_id=:org FOR UPDATE OF q"""),
             {"item": body.request_item_id, "org": p.organization_id}).mappings().first()
         if not item:
             fail("ITEM_NOT_FOUND", "Request item not found", 404)
@@ -677,7 +677,7 @@ def map_data(request: Request, latitude: float | None = None, longitude: float |
         p = principal(request, conn)
         rows = conn.execute(text("""SELECT l.id,l.name,l.kind,ST_Y(l.position::geometry) AS latitude,
             ST_X(l.position::geometry) AS longitude,l.organization_id FROM locations l JOIN organizations o ON o.id=l.organization_id
-            WHERE l.active AND (l.organization_id=:org OR o.share_inventory)
+            WHERE l.active AND o.active AND (l.organization_id=:org OR o.share_inventory)
             AND (CAST(:lat AS double precision) IS NULL OR ST_DWithin(l.position,ST_SetSRID(ST_MakePoint(:lon,:lat),4326)::geography,:radius))
             LIMIT 300"""), {"org": p.organization_id, "lat": latitude,
              "lon": longitude, "radius": radius_km*1000}).mappings().all()
@@ -747,15 +747,23 @@ def set_member_role(user_id: UUID, role: str, request: Request):
         fail("INVALID_ROLE", "Unknown organization role")
     with engine.begin() as conn:
         p = principal(request, conn, {"organization_admin"})
-        target = conn.execute(text("SELECT email FROM users WHERE id=:id AND active"), {"id": user_id}).scalar_one_or_none()
-        if not target:
-            fail("USER_NOT_FOUND", "Active account not found", 404)
-        previous = conn.execute(text("SELECT role FROM memberships WHERE user_id=:uid AND organization_id=:org FOR UPDATE"),
-                                {"uid": user_id, "org": p.organization_id}).scalar_one_or_none()
-        conn.execute(text("""INSERT INTO memberships (user_id,organization_id,role)
-            VALUES (:uid,:org,:role) ON CONFLICT (user_id,organization_id)
-            DO UPDATE SET role=EXCLUDED.role, active=true"""),
+        # Serialize role changes within an organization, including last-admin checks.
+        conn.execute(text("SELECT id FROM organizations WHERE id=:org FOR UPDATE"), {"org": p.organization_id})
+        previous = conn.execute(text("""SELECT m.role,m.active FROM memberships m JOIN users u ON u.id=m.user_id
+            WHERE m.user_id=:uid AND m.organization_id=:org AND u.active FOR UPDATE OF m"""),
+            {"uid": user_id, "org": p.organization_id}).mappings().first()
+        if not previous:
+            fail("MEMBER_NOT_FOUND", "Active account is not a member of this organization", 404)
+        if previous["role"] == "organization_admin" and previous["active"] and role != "organization_admin":
+            admins: int = conn.execute(text("""SELECT count(*) FROM memberships m JOIN users u ON u.id=m.user_id
+                WHERE m.organization_id=:org AND m.role='organization_admin' AND m.active AND u.active"""),
+                {"org": p.organization_id}).scalar_one()
+            if admins == 1:
+                fail("LAST_ADMIN", "Assign another administrator before changing this role", 409)
+        conn.execute(text("""UPDATE memberships SET role=:role,active=true
+            WHERE user_id=:uid AND organization_id=:org"""),
             {"uid": user_id, "org": p.organization_id, "role": role})
         audit(conn, p, request, "membership.role_changed", "membership", str(user_id),
-              before={"role": previous}, after={"role": role})
+              before={"role": previous["role"], "active": previous["active"]},
+              after={"role": role, "active": True})
         return {"user_id": str(user_id), "role": role}
