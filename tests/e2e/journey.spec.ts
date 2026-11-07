@@ -12,7 +12,7 @@ test("critical workflow creates a request and explains matching", async ({page})
   await login(page,"coordinator@reliefgrid.local");
   await page.getByRole("button",{name:"Requests",exact:true}).click();
   await page.getByLabel("Delivery location").selectOption({label:"Pluit Emergency Shelter"});
-  await page.getByLabel("Resource",{exact:true}).selectOption({label:"Drinking water / liter"});
+  await page.getByRole("combobox",{name:"Resource",exact:true}).selectOption({label:"Drinking water / liter"});
   await page.getByLabel("Quantity").fill("5");
   await page.getByLabel("Priority").selectOption("critical");
   const deadline=new Date(Date.now()+72*3600000).toISOString().slice(0,16);
@@ -32,6 +32,6 @@ test("invalid credentials show a safe error and no workspace", async ({page}) =>
   await page.getByLabel("Email address").fill("unknown@synthetic.example");
   await page.getByLabel("Password").fill("invalid-long-password");
   await page.getByRole("button",{name:/Sign in/}).click();
-  await expect(page.getByRole("alert")).toContainText("Invalid email or password");
+  await expect(page.getByRole("alert").filter({hasText:"Invalid email or password"})).toContainText("Invalid email or password");
   await expect(page.getByRole("heading",{name:"Operational overview"})).not.toBeVisible();
 });
